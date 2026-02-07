@@ -1,0 +1,28 @@
+services:
+  dev:
+    build: .
+    volumes:
+      - ./workspace:/workspace
+      - ./templates:/templates:ro
+      - ${SSH_AUTH_SOCK}:/tmp/ssh-agent.sock
+    environment:
+      - DOCKER_HOST=tcp://daemon:2375
+      - SSH_AUTH_SOCK=/tmp/ssh-agent.sock
+      - GIT_URL=${GIT_URL}
+      - REPO_NAME=${REPO_NAME}
+      - SUBFOLDER=${SUBFOLDER}
+      - TEMPLATE_TYPE=${TEMPLATE_TYPE}
+    depends_on:
+      - daemon
+
+  daemon:
+    image: docker:dind
+    privileged: true
+    environment:
+      - DOCKER_TLS_CERTDIR=
+    volumes:
+      - ./workspace:/workspace
+      - docker_cache:/var/lib/docker
+
+volumes:
+  docker_cache:

@@ -1,0 +1,14 @@
+{
+    "name": "PHP Environment",
+    "image": "mcr.microsoft.com/devcontainers/php:8-bullseye",
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "xdebug.php-debug",
+                "bmewburn.vscode-intelephense-client"
+            ]
+        }
+    },
+    "forwardPorts": [8080],
+    "remoteUser": "vscode"
+}

@@ -1,0 +1,13 @@
+{
+    "name": "Node.js Environment",
+    "image": "mcr.microsoft.com/devcontainers/javascript-node:18-bullseye",
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "dbaeumer.vscode-eslint"
+            ]
+        }
+    },
+    "postCreateCommand": "npm install -g @dendronhq/safe-npm && echo \"alias npm='safe-npm'\" >> $HOME/.bashrc && safe-npm install",
+    "remoteUser": "node"
+}
