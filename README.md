@@ -29,7 +29,7 @@ To allow developers to go from a repository URL to a safe, language-specific dev
 # 🚀 Getting Started
 ## Prerequisites
 
-- Docker and Docker Compose installed.
+- Git, Docker and Docker Compose installed.
 
 - An active SSH agent on your host (ssh-add -l should show your keys).
 
