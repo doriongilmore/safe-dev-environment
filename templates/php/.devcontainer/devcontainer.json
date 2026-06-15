@@ -1,6 +1,8 @@
 {
     "name": "PHP Environment",
-    "image": "mcr.microsoft.com/devcontainers/php:8-bullseye",
+    "build": {
+        "dockerfile": "Dockerfile"
+    },
     "customizations": {
         "vscode": {
             "extensions": [
@@ -10,5 +12,6 @@
         }
     },
     "forwardPorts": [8080],
+    "postCreateCommand": "bash .devcontainer/scripts/post-create.sh",
     "remoteUser": "vscode"
 }
