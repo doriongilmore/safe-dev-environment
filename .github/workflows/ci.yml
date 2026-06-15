@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  shellcheck:
+    name: shellcheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install shellcheck
+        run: sudo apt-get install -y shellcheck
+
+      - name: Run shellcheck on scripts/
+        run: |
+          shellcheck scripts/entrypoint.sh
+          shellcheck scripts/wks
+
+  hadolint:
+    name: hadolint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install hadolint
+        run: |
+          wget -qO /usr/local/bin/hadolint \
+            https://github.com/hadolint/hadolint/releases/latest/download/hadolint-Linux-x86_64
+          chmod +x /usr/local/bin/hadolint
+
+      - name: Lint Dockerfile (workstation)
+        run: hadolint Dockerfile
+
+      - name: Lint template Dockerfiles
+        run: |
+          hadolint templates/node/.devcontainer/Dockerfile
+          hadolint templates/php/.devcontainer/Dockerfile
+          hadolint templates/default/.devcontainer/Dockerfile
+
+  compose-validate:
+    name: compose config validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create minimal .env for compose validation
+        run: |
+          cat > .env <<'EOF'
+          ANTHROPIC_API_KEY=placeholder
+          GIT_AUTHOR_NAME=CI
+          GIT_AUTHOR_EMAIL=ci@example.com
+          SSH_AUTH_SOCK=/tmp/ssh-agent.sock
+          EOF
+
+      - name: Validate compose.yaml
+        run: docker compose config > /dev/null
+
+  build:
+    name: build workstation image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build workstation image
+        run: docker build --build-arg NODE_VERSION=22 --build-arg DEVCONTAINER_CLI_VERSION=0.75.0 -t workstation:ci .
