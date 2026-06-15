@@ -1,0 +1,481 @@
+#!/bin/bash
+set -euo pipefail
+
+# ── Colours ───────────────────────────────────────────────────────────────────
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+CYAN='\033[0;36m'
+BOLD='\033[1m'
+NC='\033[0m'
+
+die()  { echo -e "${RED}Error:${NC} $1" >&2; exit 1; }
+info() { echo -e "${GREEN}→${NC} $1"; }
+warn() { echo -e "${YELLOW}⚠${NC} $1"; }
+
+WORKSPACE="/workspace"
+TEMPLATES_DIR="/templates"
+
+# ── resolve_path ──────────────────────────────────────────────────────────────
+# Resolves the effective workspace-folder path for a project.
+# Logic:
+#   1. If subfolder provided → base/subfolder (no check; caller knows best)
+#   2. If base/.devcontainer exists → base
+#   3. Scan one level: subdirs with .devcontainer
+#      - 0 found  → error
+#      - 1 found  → auto-select with warning
+#      - 2+ found → error, ask to specify
+#
+# Prints the path on stdout. Info/warn messages go to stderr.
+resolve_path() {
+    local project="$1"
+    local subfolder="${2:-}"
+    local base="${WORKSPACE}/${project}"
+
+    [ -d "$base" ] || die "Project directory not found: $base"
+
+    if [ -n "$subfolder" ]; then
+        echo "${base}/${subfolder}"
+        return
+    fi
+
+    if [ -d "${base}/.devcontainer" ]; then
+        echo "$base"
+        return
+    fi
+
+    # Scan one level
+    local candidates=()
+    for d in "${base}"/*/; do
+        [ -d "${d}.devcontainer" ] && candidates+=("$d")
+    done
+
+    case ${#candidates[@]} in
+        0)
+            die "No .devcontainer found in '${project}'.
+  Run: wks init to apply a template, or specify a subfolder:
+  wks <command> ${project} <subfolder>"
+            ;;
+        1)
+            local name
+            name=$(basename "${candidates[0]%/}")
+            warn "Auto-detected subfolder: ${name}" >&2
+            echo "${candidates[0]%/}"
+            ;;
+        *)
+            local list=""
+            for c in "${candidates[@]}"; do list+="  - $(basename "${c%/}")\n"; done
+            die "Multiple subfolders with .devcontainer found in '${project}'.
+  Specify one:
+$(printf "$list")  wks <command> ${project} <subfolder>"
+            ;;
+    esac
+}
+
+# ── find_devcontainer_container ───────────────────────────────────────────────
+# Returns the container ID created by devcontainer CLI for a given workspace-folder.
+# The devcontainer CLI labels every container it creates with devcontainer.local_folder=<path>.
+find_devcontainer_container() {
+    local workdir="$1"
+    docker ps -q --filter "label=devcontainer.local_folder=${workdir}" 2>/dev/null || true
+}
+
+# ── is_devcontainer_running ───────────────────────────────────────────────────
+is_devcontainer_running() {
+    local workdir="$1"
+    local container_id
+    container_id=$(find_devcontainer_container "$workdir")
+    [ -n "$container_id" ]
+}
+
+# ── cmd_init ──────────────────────────────────────────────────────────────────
+# Bootstrap a new project: clone, apply template, devcontainer up.
+# Interactive mode if no git-url argument.
+cmd_init() {
+    local git_url=""
+    local project_name=""
+    local template_type=""
+    local subfolder="."
+    local do_up=true
+    local do_template=true
+    local interactive=false
+
+    # ── Parse args ────────────────────────────────────────────────────────────
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            -h|--help)
+                echo ""
+                echo -e "${CYAN}wks init${NC} — Bootstrap a new project"
+                echo ""
+                echo -e "Usage: wks init [git-url] [options]"
+                echo ""
+                echo -e "Options:"
+                echo -e "  -n, --name NAME      Project name (default: derived from URL)"
+                echo -e "  -t, --template TYPE  Template: node, php, default (default: auto-detect)"
+                echo -e "  -s, --subfolder PATH Subfolder in repo for devcontainer (default: .)"
+                echo -e "  --no-up              Skip devcontainer up"
+                echo -e "  --no-template        Skip template application"
+                echo -e "  -h, --help           Show this help"
+                echo ""
+                return 0
+                ;;
+            -n|--name)      project_name="$2"; shift 2 ;;
+            -t|--template)  template_type="$2"; shift 2 ;;
+            -s|--subfolder) subfolder="$2"; shift 2 ;;
+            --no-up)        do_up=false; shift ;;
+            --no-template)  do_template=false; shift ;;
+            -*)             die "Unknown option: $1. Run: wks init --help" ;;
+            *)
+                if [ -z "$git_url" ]; then
+                    git_url="$1"
+                else
+                    die "Unexpected argument: $1"
+                fi
+                shift
+                ;;
+        esac
+    done
+
+    # ── Interactive mode if no URL ────────────────────────────────────────────
+    if [ -z "$git_url" ]; then
+        interactive=true
+        echo ""
+        echo -e "${CYAN}wks init — interactive mode${NC}"
+        echo ""
+        read -rp "Git URL: " git_url
+        [ -z "$git_url" ] && die "Git URL is required."
+
+        local default_name
+        default_name=$(basename "$git_url" .git)
+        read -rp "Project name [$default_name]: " input_name
+        project_name="${input_name:-$default_name}"
+
+        read -rp "Subfolder [.]: " input_subfolder
+        subfolder="${input_subfolder:-.}"
+    fi
+
+    # ── Derive project name if not set ────────────────────────────────────────
+    [ -z "$project_name" ] && project_name=$(basename "$git_url" .git)
+
+    local target_dir="${WORKSPACE}/${project_name}"
+    local workspace_path="$target_dir"
+    [ "$subfolder" != "." ] && workspace_path="${target_dir}/${subfolder}"
+
+    # ── Print plan ────────────────────────────────────────────────────────────
+    echo ""
+    info "Project:   ${project_name}"
+    info "URL:       ${git_url}"
+    info "Path:      ${workspace_path}"
+    info "Template:  ${template_type:-auto-detect}"
+    info "Dev up:    ${do_up}"
+    echo ""
+
+    # ── [1/3] SSH check ───────────────────────────────────────────────────────
+    if [[ "$git_url" =~ ^git@ ]]; then
+        if ! ssh-add -l > /dev/null 2>&1; then
+            warn "SSH agent has no loaded keys. Clone may fail for private repos."
+            warn "Ensure SSH_AUTH_SOCK is set and ssh-add has been run on the host."
+        fi
+    fi
+
+    # ── [1/3] Clone ───────────────────────────────────────────────────────────
+    info "[1/3] Clone..."
+    if [ -d "${target_dir}/.git" ]; then
+        info "  Repository already exists at ${target_dir}."
+        if [ "$interactive" = true ]; then
+            read -rp "  Pull latest? [y/N]: " do_pull
+            if [[ "$do_pull" =~ ^[yY]$ ]]; then
+                git -C "$target_dir" pull --rebase
+                info "  Pulled."
+            fi
+        else
+            info "  Skipping (already exists). Pull manually if needed."
+        fi
+    else
+        git clone "$git_url" "$target_dir"
+        info "  Cloned to ${target_dir}."
+    fi
+
+    # ── [2/3] Template ────────────────────────────────────────────────────────
+    info "[2/3] Template..."
+    if [ "$do_template" = false ]; then
+        info "  Skipped (--no-template)."
+    elif [ -d "${workspace_path}/.devcontainer" ]; then
+        info "  .devcontainer already exists — skipped."
+    else
+        # Auto-detect after clone (source code is now available)
+        if [ -z "$template_type" ]; then
+            if   [ -f "${workspace_path}/package.json" ];  then template_type="node"
+            elif [ -f "${workspace_path}/composer.json" ]; then template_type="php"
+            else                                                template_type="default"
+            fi
+            info "  Auto-detected template: ${template_type}"
+        fi
+
+        # Interactive: let user override auto-detected template
+        if [ "$interactive" = true ]; then
+            read -rp "  Template [$template_type]: " input_template
+            template_type="${input_template:-$template_type}"
+        fi
+
+        local template_src="${TEMPLATES_DIR}/${template_type}"
+        if [ ! -d "$template_src" ]; then
+            warn "  Template '${template_type}' not found. Falling back to 'default'."
+            template_type="default"
+            template_src="${TEMPLATES_DIR}/default"
+        fi
+
+        mkdir -p "$workspace_path"
+        cp -r "${template_src}/.devcontainer" "${workspace_path}/"
+        info "  Template '${template_type}' applied."
+    fi
+
+    # ── [3/3] devcontainer up ─────────────────────────────────────────────────
+    info "[3/3] devcontainer up..."
+    if [ "$do_up" = false ]; then
+        info "  Skipped (--no-up). Start later with: wks open ${project_name}"
+    else
+        devcontainer up --workspace-folder "$workspace_path"
+        info "  Devcontainer started."
+    fi
+
+    # ── Summary ───────────────────────────────────────────────────────────────
+    echo ""
+    echo -e "${GREEN}✓ Project '${project_name}' initialized.${NC}"
+    echo ""
+    echo -e "  ${CYAN}wks open${NC}   ${project_name}"
+    echo -e "  ${CYAN}wks exec${NC}   ${project_name}"
+    echo -e "  ${CYAN}wks status${NC}"
+    echo ""
+}
+
+# ── cmd_open ──────────────────────────────────────────────────────────────────
+# Start devcontainer if not running, then launch opencode in the project directory.
+# opencode runs from the workstation (not inside the devcontainer) for TUI stability.
+cmd_open() {
+    local project="${1:-}"
+    local subfolder="${2:-}"
+    [ -z "$project" ] && die "Usage: wks open <project> [subfolder]"
+
+    local workdir
+    workdir=$(resolve_path "$project" "$subfolder")
+
+    if is_devcontainer_running "$workdir"; then
+        info "Devcontainer already running for '${project}'"
+    else
+        info "Starting devcontainer for '${project}'..."
+        devcontainer up --workspace-folder "$workdir"
+        info "Devcontainer started."
+    fi
+
+    info "Launching opencode in ${workdir}..."
+    cd "$workdir" && opencode
+}
+
+# ── cmd_exec ──────────────────────────────────────────────────────────────────
+# Open an interactive bash shell inside the devcontainer.
+# Uses docker exec directly (more stable than devcontainer exec for TUI tools).
+cmd_exec() {
+    local project="${1:-}"
+    local subfolder="${2:-}"
+    [ -z "$project" ] && die "Usage: wks exec <project> [subfolder]"
+
+    local workdir
+    workdir=$(resolve_path "$project" "$subfolder")
+
+    local container_id
+    container_id=$(find_devcontainer_container "$workdir")
+    [ -z "$container_id" ] && die "Devcontainer for '${project}' is not running.
+  Start it first: wks open ${project}"
+
+    info "Entering devcontainer for '${project}'..."
+    docker exec -it "$container_id" /bin/bash -i
+}
+
+# ── cmd_stop ──────────────────────────────────────────────────────────────────
+cmd_stop() {
+    local project="${1:-}"
+    local subfolder="${2:-}"
+    [ -z "$project" ] && die "Usage: wks stop <project> [subfolder]"
+
+    local workdir
+    workdir=$(resolve_path "$project" "$subfolder")
+
+    if ! is_devcontainer_running "$workdir"; then
+        warn "Devcontainer for '${project}' is not running."
+        return 0
+    fi
+
+    info "Stopping devcontainer for '${project}'..."
+    devcontainer down --workspace-folder "$workdir"
+    info "Stopped."
+}
+
+# ── cmd_status ────────────────────────────────────────────────────────────────
+# Without arg: list all projects in /workspace/ with their state.
+# With arg: detail view for one project.
+#
+# States:
+#   running        — devcontainer container is running
+#   stopped        — .devcontainer present but container stopped
+#   no devcontainer — .devcontainer not present
+cmd_status() {
+    local project="${1:-}"
+
+    if [ -n "$project" ]; then
+        # Detail view
+        local base="${WORKSPACE}/${project}"
+        [ -d "$base" ] || die "Project '${project}' not found in ${WORKSPACE}"
+
+        echo -e "${BOLD}Project: ${project}${NC}"
+        echo -e "  Path:   ${base}"
+
+        # Type detection
+        local ptype="unknown"
+        [ -f "${base}/package.json" ]     && ptype="node"
+        [ -f "${base}/composer.json" ]    && ptype="php"
+        [ -f "${base}/go.mod" ]           && ptype="go"
+        [ -f "${base}/Cargo.toml" ]       && ptype="rust"
+        { [ -f "${base}/requirements.txt" ] || [ -f "${base}/pyproject.toml" ]; } && ptype="python"
+        echo -e "  Type:   ${ptype}"
+
+        # Devcontainer state
+        if [ -d "${base}/.devcontainer" ]; then
+            local workdir
+            workdir=$(resolve_path "$project" "" 2>/dev/null || echo "$base")
+            if is_devcontainer_running "$workdir"; then
+                local cid
+                cid=$(find_devcontainer_container "$workdir")
+                echo -e "  Status: ${GREEN}running${NC} (container: ${cid:0:12})"
+            else
+                echo -e "  Status: ${YELLOW}stopped${NC}"
+            fi
+        else
+            echo -e "  Status: ${YELLOW}no devcontainer${NC} (run: wks init to apply a template)"
+        fi
+    else
+        # List all projects
+        echo -e "${BOLD}Projects in ${WORKSPACE}:${NC}"
+        echo ""
+
+        local found=0
+        for dir in "${WORKSPACE}"/*/; do
+            [ -d "$dir" ] || continue
+            [ -d "${dir}.git" ] || [ -d "${dir}.devcontainer" ] || continue
+
+            local name
+            name=$(basename "$dir")
+            found=$((found + 1))
+
+            # Devcontainer state
+            local status_str="${YELLOW}no devcontainer${NC}"
+            if [ -d "${dir}.devcontainer" ]; then
+                if is_devcontainer_running "${dir%/}"; then
+                    status_str="${GREEN}running${NC}"
+                else
+                    status_str="${YELLOW}stopped${NC}"
+                fi
+            fi
+
+            # Type (fast detection)
+            local ptype="-"
+            [ -f "${dir}package.json" ]   && ptype="node"
+            [ -f "${dir}composer.json" ]  && ptype="php"
+            [ -f "${dir}go.mod" ]         && ptype="go"
+            [ -f "${dir}Cargo.toml" ]     && ptype="rust"
+
+            printf "  %-25s %-8s %b\n" "$name" "$ptype" "$status_str"
+        done
+
+        if [ $found -eq 0 ]; then
+            warn "No projects found in ${WORKSPACE}"
+            echo "  Run 'wks init' to bootstrap your first project."
+        else
+            echo ""
+            echo -e "  ${found} project(s) found."
+        fi
+    fi
+}
+
+# ── cmd_remove ────────────────────────────────────────────────────────────────
+# Remove a project: stop devcontainer if running, delete the directory.
+# Asks for confirmation unless --force is passed.
+cmd_remove() {
+    local project="${1:-}"
+    local force=false
+    [ "$project" = "--force" ] && { force=true; project="${2:-}"; }
+    [ -z "$project" ] && die "Usage: wks remove [--force] <project>"
+
+    local base="${WORKSPACE}/${project}"
+    [ -d "$base" ] || die "Project '${project}' not found in ${WORKSPACE}"
+
+    if [ "$force" = false ]; then
+        echo -e "${RED}Warning:${NC} This will permanently delete ${base}"
+        echo -n "Are you sure? [y/N] "
+        read -r confirm
+        [[ "$confirm" =~ ^[yY]$ ]] || { echo "Aborted."; exit 0; }
+    fi
+
+    # Stop devcontainer if running
+    if [ -d "${base}/.devcontainer" ]; then
+        local workdir
+        workdir=$(resolve_path "$project" "" 2>/dev/null || echo "$base")
+        if is_devcontainer_running "$workdir"; then
+            info "Stopping devcontainer for '${project}'..."
+            devcontainer down --workspace-folder "$workdir" 2>/dev/null || true
+        fi
+    fi
+
+    info "Removing ${base}..."
+    rm -rf "$base"
+    info "Project '${project}' removed."
+}
+
+# ── cmd_help ──────────────────────────────────────────────────────────────────
+cmd_help() {
+    echo ""
+    echo -e "${BOLD}wks — Workstation project manager${NC}"
+    echo ""
+    echo -e "${CYAN}Usage:${NC} wks <command> [args]"
+    echo ""
+    echo -e "${CYAN}Commands:${NC}"
+    echo -e "  ${GREEN}init${NC}   [git-url] [options]     Bootstrap a new project (interactive if no args)"
+    echo -e "  ${GREEN}open${NC}   <project> [subfolder]   Start devcontainer if needed, launch opencode"
+    echo -e "  ${GREEN}exec${NC}   <project> [subfolder]   Open a shell inside the devcontainer"
+    echo -e "  ${GREEN}stop${NC}   <project> [subfolder]   Stop the devcontainer"
+    echo -e "  ${GREEN}status${NC} [project]               Show project status (all if no project given)"
+    echo -e "  ${GREEN}remove${NC} [--force] <project>     Remove project and stop its devcontainer"
+    echo -e "  ${GREEN}help${NC}                           Show this help"
+    echo ""
+    echo -e "${CYAN}Examples:${NC}"
+    echo -e "  wks init                             # Interactive bootstrap"
+    echo -e "  wks init git@github.com:user/repo    # Bootstrap with URL"
+    echo -e "  wks open omni-tools                  # Start devcontainer + opencode"
+    echo -e "  wks open my-monorepo apps/api        # With explicit subfolder"
+    echo -e "  wks exec omni-tools                  # Shell in devcontainer"
+    echo -e "  wks stop omni-tools                  # Stop devcontainer"
+    echo -e "  wks status                           # List all projects"
+    echo -e "  wks status omni-tools                # Detail for one project"
+    echo -e "  wks remove omni-tools                # Remove with confirmation"
+    echo -e "  wks remove --force omni-tools        # Remove without confirmation"
+    echo ""
+}
+
+# ── Router ────────────────────────────────────────────────────────────────────
+CMD="${1:-}"
+shift || true
+
+case "$CMD" in
+    init)    cmd_init   "$@" ;;
+    open)    cmd_open   "$@" ;;
+    exec)    cmd_exec   "$@" ;;
+    stop)    cmd_stop   "$@" ;;
+    status)  cmd_status "$@" ;;
+    remove)  cmd_remove "$@" ;;
+    help|--help|-h|"") cmd_help ;;
+    *)
+        echo -e "${RED}Error:${NC} Unknown command: ${CMD}" >&2
+        cmd_help
+        exit 1
+        ;;
+esac
