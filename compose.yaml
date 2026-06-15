@@ -33,6 +33,7 @@ services:
     privileged: true
     environment:
       - DOCKER_TLS_CERTDIR=/certs
+      - DOCKER_TLS_SAN=DNS:daemon
     volumes:
       - ./workspace:/workspace
       - docker_cache:/var/lib/docker
