@@ -1,6 +1,8 @@
 {
     "name": "Node.js Environment",
-    "image": "mcr.microsoft.com/devcontainers/javascript-node:24-bullseye",
+    "build": {
+        "dockerfile": "Dockerfile"
+    },
     "customizations": {
         "vscode": {
             "extensions": [
@@ -8,6 +10,6 @@
             ]
         }
     },
-    "postCreateCommand": "npm install -g @dendronhq/safe-npm && echo \"alias npm='safe-npm'\" >> $HOME/.bashrc && safe-npm install",
+    "postCreateCommand": "bash .devcontainer/scripts/post-create.sh",
     "remoteUser": "node"
 }
