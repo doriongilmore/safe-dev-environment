@@ -1,1 +1,5 @@
 .env
+workspace
+.opencode
+.ocdata
+*.local

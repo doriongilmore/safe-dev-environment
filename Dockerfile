@@ -20,14 +20,18 @@ RUN mkdir -p /etc/apt/keyrings \
     && apt-get update && apt-get install -y docker-ce-cli
 
 # Install Node.js & Dev Container CLI
-RUN curl -fsSL https://deb.nodesource.com/setup_18.x | bash - \
+RUN curl -fsSL https://deb.nodesource.com/setup_24.x | bash - \
     && apt-get install -y nodejs \
     && npm install -g @devcontainers/cli
+
+# Install opencode
+RUN curl -fsSL https://opencode.ai/install | bash - 
 
 # Pre-trust common git hosts to prevent SSH prompts
 RUN mkdir -p -m 0700 ~/.ssh && \
     ssh-keyscan github.com gitlab.com bitbucket.org >> ~/.ssh/known_hosts
 
+ENV OPENCODE_CONFIG_DIR=/root/.config/opencode
 WORKDIR /workspace
 
 # Copy and set up the bootstrap script

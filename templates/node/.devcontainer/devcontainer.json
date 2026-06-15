@@ -1,6 +1,6 @@
 {
     "name": "Node.js Environment",
-    "image": "mcr.microsoft.com/devcontainers/javascript-node:18-bullseye",
+    "image": "mcr.microsoft.com/devcontainers/javascript-node:24-bullseye",
     "customizations": {
         "vscode": {
             "extensions": [

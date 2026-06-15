@@ -18,19 +18,19 @@ TEMPLATE_TYPE="${TEMPLATE_TYPE:-default}"
 echo "Starting Dev Environment Orchestrator..."
 
 # Clone or Update
-if [ -d "$TARGET_DIR/.git" ]; then
-    echo "Existing repository found. Pulling latest..."
-    cd "$TARGET_DIR"
-    # git pull
-else
-    if [ -z "$GIT_URL" ]; then
-        echo "Error: No GIT_URL provided and no existing project found."
-        exit 1
-    fi
-    echo "Cloning $GIT_URL..."
-    git clone "$GIT_URL" "$TARGET_DIR"
-    cd "$TARGET_DIR"
-fi
+# if [ -d "$TARGET_DIR/.git" ]; then
+#     echo "Existing repository found. Pulling latest..."
+#     cd "$TARGET_DIR"
+#     # git pull
+# else
+#     if [ -z "$GIT_URL" ]; then
+#         echo "Error: No GIT_URL provided and no existing project found."
+#         exit 1
+#     fi
+#     echo "Cloning $GIT_URL..."
+#     git clone "$GIT_URL" "$TARGET_DIR" | echo failed to clone
+#     cd "$TARGET_DIR"
+# fi
 
 # Determine the effective workspace path
 # If SUBFOLDER is "apps/api", the devcontainer runs in /workspace/project/apps/api
@@ -38,17 +38,17 @@ RELATIVE_PATH="${SUBFOLDER:-.}"
 WORKSPACE_PATH="$TARGET_DIR/$RELATIVE_PATH"
 
 # Template Logic
-if [ ! -d "$WORKSPACE_PATH/.devcontainer" ]; then
-    echo "Applying template to subfolder: $RELATIVE_PATH"
-    mkdir -p "$WORKSPACE_PATH"
+# if [ ! -d "$WORKSPACE_PATH/.devcontainer" ]; then
+#     echo "Applying template to subfolder: $RELATIVE_PATH"
+#     mkdir -p "$WORKSPACE_PATH"
     
-    if [ -d "/templates/${TEMPLATE_TYPE}" ]; then
-        cp -r "/templates/${TEMPLATE_TYPE}/.devcontainer" "$WORKSPACE_PATH/"
-    else
-        echo "Template '${TEMPLATE_TYPE}' not found. Using basic fallback."
-        cp -r "/templates/default/.devcontainer" "$WORKSPACE_PATH/"
-    fi
-fi
+#     if [ -d "/templates/${TEMPLATE_TYPE}" ]; then
+#         cp -r "/templates/${TEMPLATE_TYPE}/.devcontainer" "$WORKSPACE_PATH/"
+#     else
+#         echo "Template '${TEMPLATE_TYPE}' not found. Using basic fallback."
+#         cp -r "/templates/default/.devcontainer" "$WORKSPACE_PATH/"
+#     fi
+# fi
 
 echo "Waiting for Docker daemon to wake up..."
 until docker version > /dev/null 2>&1; do
@@ -59,13 +59,16 @@ echo "Docker daemon is ready!"
 
 # Spin up and Enter
 echo "Building/Starting Dev Container..."
-devcontainer up --workspace-folder "$WORKSPACE_PATH"
+# devcontainer up --workspace-folder "$WORKSPACE_PATH"
 
 # Optional: Reset permissions so your host user can read/write the volumes easily
-chown -R 1000:1000 "$TARGET_DIR"
+# chown -R 1000:1000 "$TARGET_DIR"
 
 # echo "Dropping you into the container. Type 'exit' to return to management layer."
 # devcontainer exec --workspace-folder "$WORKSPACE_PATH" /bin/bash -i || true
+
+# echo "Opening opencode"
+# opencode
 
 echo "Interactive session ended. Management container idling..."
 tail -f /dev/null

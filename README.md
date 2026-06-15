@@ -5,7 +5,9 @@ An automated, containerized system to provision isolated, pre-configured develop
 # 🎯 Project Goal
 
 To allow developers to go from a repository URL to a safe, language-specific development environment in a single command, without polluting their host machine with toolchains (Node, PHP, etc.) or exposing the host's Docker socket directly to untrusted code.
+
 # 🏗️ Architectural Decisions
+
 1) The "Management Layer" (Orchestrator)
 
     The dev service (built from the Dockerfile) acts as a smart controller. It handles Git operations, identity configuration, and template injection. It never runs your application code itself; it only manages the lifecycle of the environment that does.
