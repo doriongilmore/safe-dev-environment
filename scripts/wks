@@ -9,7 +9,12 @@ CYAN='\033[0;36m'
 BOLD='\033[1m'
 NC='\033[0m'
 
-die()  { echo -e "${RED}Error:${NC} $1" >&2; exit 1; }
+# exit 1 — user error (bad args, missing project, unknown option, wrong state)
+# exit 2 — system error (daemon unreachable, TLS timeout, unexpected tool failure)
+die_user() { echo -e "${RED}Error:${NC} $1" >&2; exit 1; }
+die_sys()  { echo -e "${RED}System error:${NC} $1" >&2; exit 2; }
+# Alias: die → die_user (default for backward-compat and convenience)
+die()      { die_user "$1"; }
 info() { echo -e "${GREEN}→${NC} $1"; }
 warn() { echo -e "${YELLOW}⚠${NC} $1"; }
 
@@ -64,10 +69,10 @@ resolve_path() {
             ;;
         *)
             local list=""
-            for c in "${candidates[@]}"; do list+="  - $(basename "${c%/}")\n"; done
+            for c in "${candidates[@]}"; do list+="  - $(basename "${c%/}")"$'\n'; done
             die "Multiple subfolders with .devcontainer found in '${project}'.
   Specify one:
-$(printf "$list")  wks <command> ${project} <subfolder>"
+${list}  wks <command> ${project} <subfolder>"
             ;;
     esac
 }
@@ -205,11 +210,20 @@ cmd_init() {
     else
         # Auto-detect after clone (source code is now available)
         if [ -z "$template_type" ]; then
-            if   [ -f "${workspace_path}/package.json" ];  then template_type="node"
-            elif [ -f "${workspace_path}/composer.json" ]; then template_type="php"
-            else                                                template_type="default"
+            local detected_lang=""
+            if   [ -f "${workspace_path}/package.json" ];   then template_type="node";    detected_lang="node"
+            elif [ -f "${workspace_path}/composer.json" ];  then template_type="php";     detected_lang="php"
+            elif [ -f "${workspace_path}/go.mod" ];         then template_type="default"; detected_lang="go"
+            elif [ -f "${workspace_path}/Cargo.toml" ];     then template_type="default"; detected_lang="rust"
+            elif [ -f "${workspace_path}/requirements.txt" ] || [ -f "${workspace_path}/pyproject.toml" ]; \
+                                                            then template_type="default"; detected_lang="python"
+            else                                                 template_type="default"; detected_lang=""
             fi
-            info "  Auto-detected template: ${template_type}"
+            if [ -n "$detected_lang" ] && [ "$template_type" = "default" ] && [ "$detected_lang" != "default" ]; then
+                info "  Detected language: ${detected_lang} (no dedicated template — using 'default')"
+            else
+                info "  Auto-detected template: ${template_type}"
+            fi
         fi
 
         # Interactive: let user override auto-detected template
@@ -269,7 +283,7 @@ cmd_open() {
     fi
 
     info "Launching opencode in ${workdir}..."
-    cd "$workdir" && opencode
+    opencode --cwd "$workdir"
 }
 
 # ── cmd_exec ──────────────────────────────────────────────────────────────────

@@ -8,9 +8,12 @@ RED='\033[0;31m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 
-log()  { echo -e "${GREEN}[workstation]${NC} $1"; }
-warn() { echo -e "${YELLOW}[workstation]${NC} $1"; }
-err()  { echo -e "${RED}[workstation]${NC} $1" >&2; }
+log()      { echo -e "${GREEN}[workstation]${NC} $1"; }
+warn()     { echo -e "${YELLOW}[workstation]${NC} $1"; }
+err()      { echo -e "${RED}[workstation]${NC} $1" >&2; }
+# exit 1 — user/config error  |  exit 2 — system error (daemon, TLS, infra)
+die_user() { err "$1"; exit 1; }
+die_sys()  { err "System error: $1"; exit 2; }
 
 # ── Symlinks scripts → PATH ───────────────────────────────────────────────────
 # /workspace_root is the bind mount of . (repo root).
@@ -52,8 +55,7 @@ if [ "${DOCKER_TLS_VERIFY:-0}" = "1" ]; then
     elapsed=0
     until [ -f "${TLS_CERT_PATH}/ca.pem" ] && [ -f "${TLS_CERT_PATH}/cert.pem" ] && [ -f "${TLS_CERT_PATH}/key.pem" ]; do
         if [ $elapsed -ge $MAX_TLS_WAIT ]; then
-            err "TLS certificates not available after ${MAX_TLS_WAIT}s. Check daemon logs."
-            exit 1
+            die_sys "TLS certificates not available after ${MAX_TLS_WAIT}s. Check daemon logs."
         fi
         sleep 1
         elapsed=$((elapsed + 1))
@@ -69,9 +71,7 @@ MAX_DOCKER_WAIT=30
 elapsed=0
 until docker info > /dev/null 2>&1; do
     if [ $elapsed -ge $MAX_DOCKER_WAIT ]; then
-        err "Docker daemon not reachable after ${MAX_DOCKER_WAIT}s."
-        err "DOCKER_HOST=${DOCKER_HOST:-not set}"
-        exit 1
+        die_sys "Docker daemon not reachable after ${MAX_DOCKER_WAIT}s. DOCKER_HOST=${DOCKER_HOST:-not set}"
     fi
     sleep 1
     elapsed=$((elapsed + 1))
