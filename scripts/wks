@@ -286,6 +286,14 @@ cmd_open() {
     opencode --cwd "$workdir"
 }
 
+# ── cmd_root ──────────────────────────────────────────────────────────────────
+# Launch opencode from the workstation root (/workspace_root) directly.
+# No devcontainer involved — workspace_root is the workstation itself.
+cmd_root() {
+    info "Launching opencode in /workspace_root..."
+    opencode --cwd /workspace_root
+}
+
 # ── cmd_exec ──────────────────────────────────────────────────────────────────
 # Open an interactive bash shell inside the devcontainer.
 # Uses docker exec directly (more stable than devcontainer exec for TUI tools).
@@ -455,6 +463,7 @@ cmd_help() {
     echo -e "${CYAN}Commands:${NC}"
     echo -e "  ${GREEN}init${NC}   [git-url] [options]     Bootstrap a new project (interactive if no args)"
     echo -e "  ${GREEN}open${NC}   <project> [subfolder]   Start devcontainer if needed, launch opencode"
+    echo -e "  ${GREEN}root${NC}                           Launch opencode in the workstation root (/workspace_root)"
     echo -e "  ${GREEN}exec${NC}   <project> [subfolder]   Open a shell inside the devcontainer"
     echo -e "  ${GREEN}stop${NC}   <project> [subfolder]   Stop the devcontainer"
     echo -e "  ${GREEN}status${NC} [project]               Show project status (all if no project given)"
@@ -464,6 +473,7 @@ cmd_help() {
     echo -e "${CYAN}Examples:${NC}"
     echo -e "  wks init                             # Interactive bootstrap"
     echo -e "  wks init git@github.com:user/repo    # Bootstrap with URL"
+    echo -e "  wks root                             # Open opencode in /workspace_root"
     echo -e "  wks open omni-tools                  # Start devcontainer + opencode"
     echo -e "  wks open my-monorepo apps/api        # With explicit subfolder"
     echo -e "  wks exec omni-tools                  # Shell in devcontainer"
@@ -482,6 +492,7 @@ shift || true
 case "$CMD" in
     init)    cmd_init   "$@" ;;
     open)    cmd_open   "$@" ;;
+    root)    cmd_root ;;
     exec)    cmd_exec   "$@" ;;
     stop)    cmd_stop   "$@" ;;
     status)  cmd_status "$@" ;;
