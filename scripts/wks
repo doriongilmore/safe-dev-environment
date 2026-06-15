@@ -283,7 +283,7 @@ cmd_open() {
     fi
 
     info "Launching opencode in ${workdir}..."
-    opencode --cwd "$workdir"
+    opencode "$workdir"
 }
 
 # ── cmd_root ──────────────────────────────────────────────────────────────────
@@ -291,7 +291,7 @@ cmd_open() {
 # No devcontainer involved — workspace_root is the workstation itself.
 cmd_root() {
     info "Launching opencode in /workspace_root..."
-    opencode --cwd /workspace_root
+    opencode /workspace_root
 }
 
 # ── cmd_exec ──────────────────────────────────────────────────────────────────
