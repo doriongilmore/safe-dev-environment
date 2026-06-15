@@ -1,93 +1,317 @@
-# 🛡️ Dev-Environment Orchestrator
+# Workstation
 
-An automated, containerized system to provision isolated, pre-configured development environments. It bridges the gap between raw source code and a fully functional, secure developer workspace using Docker-in-Docker (DinD) and Dev Containers.
+A Docker-based multi-project workstation that provisions isolated, language-specific dev environments on demand using Docker-in-Docker and Dev Containers.
 
-# 🎯 Project Goal
+## Overview
 
-To allow developers to go from a repository URL to a safe, language-specific development environment in a single command, without polluting their host machine with toolchains (Node, PHP, etc.) or exposing the host's Docker socket directly to untrusted code.
+The workstation container runs idle and exposes a single CLI tool — `wks` — to manage multiple projects. Each project lives in `workspace/<name>/` and gets its own devcontainer. You never touch the host machine's Docker socket or toolchain.
 
-# 🏗️ Architectural Decisions
+---
 
-1) The "Management Layer" (Orchestrator)
+## Quickstart
 
-    The dev service (built from the Dockerfile) acts as a smart controller. It handles Git operations, identity configuration, and template injection. It never runs your application code itself; it only manages the lifecycle of the environment that does.
+```bash
+# 1. Clone this repo
+git clone <this-repo-url>
+cd <repo>
 
-2) Sidecar Docker Daemon (Isolation)
+# 2. Configure
+cp .env.sample .env
+# Edit .env: set ANTHROPIC_API_KEY, GIT_AUTHOR_NAME, GIT_AUTHOR_EMAIL, SSH_AUTH_SOCK
 
-    We use a docker:dind sidecar (daemon service) instead of mounting the host's /var/run/docker.sock.
+# 3. Create the workspace directory
+mkdir workspace
 
-    - Security: If a malicious package (e.g., via a compromised npm library) tries to escape the container, it only sees the isolated sidecar environment, not your host machine's images or other containers.
+# 4. Start the workstation
+docker compose up --build -d
 
-    - Cleanliness: All images pulled for your dev environments live in a dedicated volume (docker_cache), keeping your host machine clean.
+# 5. Enter the workstation
+docker exec -it <workstation_container_name> bash -i
 
-3) SSH Agent Forwarding
+# 6. Bootstrap your first project
+wks init git@github.com:user/repo.git
 
-    Private repositories are cloned using your host's SSH agent via a socket mount. Your private keys never touch the container's file system, ensuring your credentials remain secure on your host hardware.
+# Or interactively
+wks init
+```
 
-4) Template-Driven Provisioning
+---
 
-    If a repository lacks a .devcontainer configuration, the orchestrator detects the project type (via TEMPLATE_TYPE) and injects a standardized, secure template (including safety wrappers like safe-npm) before spinning up the environment.
+## Requirements
 
-# 🚀 Getting Started
-## Prerequisites
+- Docker and Docker Compose
+- An active SSH agent on your host with keys loaded:
+  ```bash
+  ssh-add -l   # must list at least one key
+  ```
+- An Anthropic API key (for opencode)
 
-- Git, Docker and Docker Compose installed.
+---
 
-- An active SSH agent on your host (ssh-add -l should show your keys).
+## Environment variables
 
-## Setup
+Copy `.env.sample` to `.env` and fill in the values.
 
-- Clone this orchestrator to your local machine.
+### Required
 
-- Configure your environment:
-    ```
-    cp .env.sample .env && mkdir workspace
-    ```
+| Variable | Description |
+|---|---|
+| `ANTHROPIC_API_KEY` | API key for opencode |
+| `GIT_AUTHOR_NAME` | Git identity used inside the container |
+| `GIT_AUTHOR_EMAIL` | Git identity used inside the container |
+| `SSH_AUTH_SOCK` | Path to your host SSH agent socket |
 
-    - Edit .env to set your GIT_URL, name, and the SSH_AUTH_SOCK path.
+Find your SSH socket path:
+```bash
+echo $SSH_AUTH_SOCK
+```
 
-    - Prepare local folder: Ensure the `workspace` directory exists.
+### Optional
 
-## Execution
+| Variable | Default | Description |
+|---|---|---|
+| `NODE_VERSION` | `22` | Node.js version in the workstation image |
+| `DEVCONTAINER_CLI_VERSION` | `0.75.0` | Pinned `@devcontainers/cli` version |
+| `FORWARD_PORT` | `5173` | Single port forwarded from workstation to host |
 
-- Run the orchestrator:
+For multiple port forwards, use `compose.override.yaml`:
+```yaml
+services:
+  workstation:
+    ports:
+      - "5173:5173"
+      - "8080:8080"
+```
 
-    `docker compose up --build`
+---
 
-- The orchestrator will:
+## `wks` command reference
 
-    - Clone the repository into ./workspace/REPO_NAME.
+```
+wks <command> [args]
 
-    - Apply the selected template if no .devcontainer exists.
+Commands:
+  init   [git-url] [options]     Bootstrap a new project (interactive if no args)
+  open   <project> [subfolder]   Start devcontainer if needed, then launch opencode
+  exec   <project> [subfolder]   Open a shell inside the devcontainer
+  stop   <project> [subfolder]   Stop the devcontainer
+  status [project]               Show project status (all projects if no argument)
+  remove [--force] <project>     Remove project and stop its devcontainer
+  help                           Show this help
+```
 
-    - Trigger `devcontainer up` to build the inner environment.
+### `wks init`
 
-## Entering the Workspace
+Clones a repository, auto-detects the project type, applies a devcontainer template if none exists, and runs `devcontainer up`.
 
-Since the management container idles after setup, you can enter your newly minted environment by running:
+```bash
+wks init                                      # interactive prompts
+wks init git@github.com:user/repo.git         # non-interactive
+wks init git@github.com:user/repo.git \
+  --name my-project \
+  --template node \
+  --no-up                                     # skip devcontainer up
+```
 
-`docker exec -it <inner_container_name> /bin/bash -i`
+Options:
+- `-n, --name NAME` — project directory name (default: derived from URL)
+- `-t, --template TYPE` — `node`, `php`, or `default` (default: auto-detect)
+- `-s, --subfolder PATH` — subfolder in the repo for the devcontainer (default: `.`)
+- `--no-up` — clone and apply template, but skip `devcontainer up`
+- `--no-template` — skip template application even if no `.devcontainer` exists
 
-# 📂 Project Structure
+### `wks open`
 
-- Dockerfile: Defines the orchestrator with Git, Docker CLI, and Dev Container CLI.
+Starts the devcontainer if not running, then launches opencode in the project directory.
 
-- bootstrap.sh: The "brain" of the project; handles cloning, identity, and template injection.
+```bash
+wks open my-project
+wks open my-monorepo apps/api     # explicit subfolder
+```
 
-- compose.yaml: Orchestrates the manager and the isolated Docker daemon.
+### `wks exec`
 
-- templates/: Contains language-specific .devcontainer setups (e.g., Node.js with safe-npm).
+Opens a bash shell inside the running devcontainer.
 
-# 🛠️ Possible Improvements
+```bash
+wks exec my-project
+```
 
-- Multi-Subfolder Support: Extend bootstrap.sh to loop through a comma-separated list of SUBFOLDERS to spin up microservices simultaneously.
+The devcontainer must be running. Use `wks open` to start it first.
 
-- Automatic Tech Detection: Replace the TEMPLATE_TYPE env var with a logic block in bootstrap.sh that detects package.json (Node), composer.json (PHP), or requirements.txt (Python) to select the template automatically.
+### `wks stop`
 
-- GPG Signing: Implement GPG agent forwarding to allow for signed commits within the dev environment.
+Stops the devcontainer.
 
-- Health Checks: Implement a more robust wait-for-it check between the manager and the daemon to ensure zero-fail startups.
+```bash
+wks stop my-project
+```
 
-- Custom CLI: Wrap the docker compose commands into a simple shell script (e.g., ./start-dev git@github...) for a smoother UX.
+### `wks status`
 
-- More Templates
+Lists all projects in `workspace/` with their current state.
+
+```bash
+wks status              # all projects
+wks status my-project   # one project (detailed)
+```
+
+States: `running`, `stopped`, `no devcontainer`.
+
+### `wks remove`
+
+Stops the devcontainer and permanently deletes the project directory.
+
+```bash
+wks remove my-project            # prompts for confirmation
+wks remove --force my-project    # no confirmation
+```
+
+---
+
+## Workflow
+
+```
+wks init git@github.com:user/repo.git
+    └── git clone → /workspace/<project>
+    └── auto-detect template (package.json → node, composer.json → php, else → default)
+    └── cp templates/<type>/.devcontainer → /workspace/<project>/
+    └── devcontainer up --workspace-folder /workspace/<project>
+
+wks open <project>
+    └── devcontainer up (if not already running)
+    └── opencode --cwd /workspace/<project>
+
+wks exec <project>
+    └── docker exec -it <container> /bin/bash -i
+
+wks stop <project>
+    └── devcontainer down --workspace-folder /workspace/<project>
+```
+
+---
+
+## Architecture
+
+```
+Host machine
+├── SSH agent (keys never leave the host)
+└── Docker
+    ├── workstation (this repo)
+    │   ├── wks CLI
+    │   ├── opencode
+    │   └── @devcontainers/cli
+    └── daemon (docker:dind sidecar)
+        └── devcontainers (one per project)
+            ├── workspace/project-a/  (node)
+            ├── workspace/project-b/  (php)
+            └── workspace/project-c/  (default)
+```
+
+**Docker-in-Docker with TLS** — the `daemon` service runs as a `docker:dind` container with TLS enabled (`tcp://daemon:2376`). Certificates are auto-generated by the daemon and shared with the workstation via a named volume. The host Docker socket is never mounted.
+
+**Script hot-reload** — `scripts/` is bind-mounted into the workstation. `entrypoint.sh` creates symlinks from `scripts/*` into `/usr/local/bin/` at startup. Editing a script on the host takes effect immediately without rebuilding the image.
+
+**Filesystem as project registry** — there is no database of projects. A directory in `workspace/` containing `.git` or `.devcontainer` is a valid project. `wks status` scans the filesystem directly.
+
+**Devcontainer detection** — `wks` locates a running devcontainer by the label `devcontainer.local_folder=<path>` that the devcontainer CLI applies to every container it creates.
+
+**opencode runs in the workstation** — not inside the devcontainer. This avoids TUI issues and keeps a consistent environment regardless of the project's language stack.
+
+---
+
+## Devcontainer templates
+
+Templates in `templates/` are copied into the target repo by `wks init` only when no `.devcontainer/` exists.
+
+| Template | Base image | Notes |
+|---|---|---|
+| `node` | `devcontainers/javascript-node:22-bullseye` | `safe-npm` symlinked as `npm`; `postCreateCommand` runs `npm install` |
+| `php` | `devcontainers/php:8-bullseye` | Xdebug + IntelliSense extensions; port 8080 forwarded; `postCreateCommand` runs `composer install` if `composer.json` present |
+| `default` | `devcontainers/base:debian` | No customizations; fallback for unknown project types |
+
+---
+
+## Troubleshooting
+
+### SSH: `Permission denied (publickey)`
+
+```
+ssh-add -l
+```
+Must show at least one key. If empty:
+```bash
+ssh-add ~/.ssh/id_ed25519    # or your key path
+```
+
+Verify `SSH_AUTH_SOCK` in `.env` points to the live socket:
+```bash
+echo $SSH_AUTH_SOCK          # run this on your host, copy the value to .env
+```
+
+The socket path changes on some systems after logout/reboot. Always verify before `docker compose up`.
+
+### SSH: socket path on macOS
+
+On macOS, the SSH agent socket path is typically `/private/tmp/com.apple.launchd.*/Listeners`. Use:
+```bash
+echo $SSH_AUTH_SOCK
+```
+
+### Docker daemon not reachable
+
+If the workstation fails to connect to the Docker daemon:
+```bash
+docker compose logs daemon
+```
+The daemon service runs a healthcheck (`docker info` every 3s). The workstation only starts once the daemon is healthy.
+
+### `wks` not found
+
+Ensure the `scripts/` directory is bind-mounted (it is, via `compose.yaml`). If running the container manually without compose, mount it:
+```bash
+docker run -v $(pwd)/scripts:/workspace_root/scripts ...
+```
+
+### Devcontainer up fails
+
+Check the devcontainer logs:
+```bash
+docker compose logs workstation
+```
+Common causes: missing `.devcontainer/` in the project directory, Docker daemon not ready, network issues pulling the base image.
+
+---
+
+## FAQ
+
+**Can I use this without an SSH agent (public repos)?**
+Yes. Use HTTPS clone URLs (`https://github.com/user/repo.git`) in `wks init`. The SSH agent is only required for SSH clone URLs (`git@github.com:...`).
+
+**Can I add my own devcontainer template?**
+Yes. Add a directory under `templates/` with a `.devcontainer/` inside it. Use `wks init --template <your-template-name>` to apply it.
+
+**Does `wks remove` delete the Docker image?**
+No. It stops and removes the running devcontainer and deletes the project directory from `workspace/`. The Docker image used by the devcontainer remains in the `docker_cache` volume.
+
+**How do I forward more than one port?**
+Create a `compose.override.yaml` at the repo root:
+```yaml
+services:
+  workstation:
+    ports:
+      - "5173:5173"
+      - "8080:8080"
+```
+
+**How do I persist bash history?**
+It is persisted automatically via the `workspace_bash_history` named volume. History survives `docker compose down && up`.
+
+**How do I update `wks` or `entrypoint.sh`?**
+Edit the files in `scripts/` directly on your host. Changes are live immediately — no rebuild needed. If you modify `entrypoint.sh`, restart the workstation container: `docker compose restart workstation`.
+
+---
+
+## License
+
+MIT — see [LICENSE](LICENSE).
