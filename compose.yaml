@@ -1,6 +1,10 @@
 services:
-  dev:
-    build: .
+  workstation:
+    build:
+      context: .
+      args:
+        NODE_VERSION: ${NODE_VERSION:-22}
+        DEVCONTAINER_CLI_VERSION: ${DEVCONTAINER_CLI_VERSION:-0.75.0}
     volumes:
       - ./.opencode:/root/.config/opencode
       - ./.ocdata:/root/.local/share/opencode
@@ -8,32 +12,39 @@ services:
       - ./workspace:/workspace
       - ./templates:/templates:ro
       - ${SSH_AUTH_SOCK}:/tmp/ssh-agent.sock
+      - workspace_bash_history:/root/.bash_history
+      - certs-client:/certs/client:ro
     ports:
-      - 5173:5173
+      - "${FORWARD_PORT:-5173}:${FORWARD_PORT:-5173}"
     environment:
-      - DOCKER_HOST=tcp://daemon:2375
+      - DOCKER_HOST=tcp://daemon:2376
+      - DOCKER_TLS_VERIFY=1
+      - DOCKER_CERT_PATH=/certs/client
       - SSH_AUTH_SOCK=/tmp/ssh-agent.sock
-      - GIT_URL=${GIT_URL}
       - GIT_AUTHOR_NAME=${GIT_AUTHOR_NAME}
       - GIT_AUTHOR_EMAIL=${GIT_AUTHOR_EMAIL}
-      - REPO_NAME=${REPO_NAME}
-      - SUBFOLDER=${SUBFOLDER}
-      - TEMPLATE_TYPE=${TEMPLATE_TYPE}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
     depends_on:
-      - daemon
+      daemon:
+        condition: service_healthy
 
   daemon:
     image: docker:dind
     privileged: true
     environment:
-      - DOCKER_TLS_VERIFY=0
-      - DOCKER_TLS_CERTDIR=
-      - DOCKER_CERT_PATH=
-      - HOST=tcp://0.0.0.0:2375
+      - DOCKER_TLS_CERTDIR=/certs
     volumes:
       - ./workspace:/workspace
       - docker_cache:/var/lib/docker
+      - certs-client:/certs/client
+    healthcheck:
+      test: ["CMD", "docker", "info"]
+      interval: 3s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
 
 volumes:
   docker_cache:
+  workspace_bash_history:
+  certs-client:
